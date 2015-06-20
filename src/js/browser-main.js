@@ -1,59 +1,85 @@
 var _ = require('underscore');
-var $ = require('jquery');
-var I = require('immutable');
-var models = require('./orbital/models');
+// var $ = require('jquery');
+// var I = require('immutable');
+// var models = require('./orbital/models');
 var PIXI = require('pixi.js');
+
+
+var _SPEED = 2000;
+var SPEED = 1 / _SPEED
+var MAX_CIRCLE_RADIUS = 300;
+var CIRCLE_COUNT = 12;
+var POINT_COUNT = 12;
+
+var POINT_PERIOD = CIRCLE_COUNT * _SPEED
 
 window.randFrom = function (start, stop) {
   return Math.random()*(stop-start) + start;
 };
 
+var period = function (continuos) {
+  return continuos - Math.floor(continuos);
+}
 
-var world = models.world.World({
-  orbits: I.OrderedMap([
-    [models.orbit.Orbit(), models.world.RadialCoords({r: 20*5, dr: -30, ds: randFrom(-0.2*Math.PI, 0.2*Math.PI)})],
-    [models.orbit.Orbit(), models.world.RadialCoords({r: 30*5, dr: -30, ds: randFrom(-0.2*Math.PI, 0.2*Math.PI)})],
-    [models.orbit.Orbit(), models.world.RadialCoords({r: 40*5, dr: -30, ds: randFrom(-0.2*Math.PI, 0.2*Math.PI)})],
-    [models.orbit.Orbit(), models.world.RadialCoords({r: 50*5, dr: -30, ds: randFrom(-0.2*Math.PI, 0.2*Math.PI)})],
-    [models.orbit.Orbit(), models.world.RadialCoords({r: 60*5, dr: -30, ds: randFrom(-0.2*Math.PI, 0.2*Math.PI)})],
-    [models.orbit.Orbit(), models.world.RadialCoords({r: 70*5, dr: -30, ds: randFrom(-0.2*Math.PI, 0.2*Math.PI)})],
-    [models.orbit.Orbit(), models.world.RadialCoords({r: 80*5, dr: -30, ds: randFrom(-0.2*Math.PI, 0.2*Math.PI)})],
-    [models.orbit.Orbit(), models.world.RadialCoords({r: 90*5, dr: -30, ds: randFrom(-0.2*Math.PI, 0.2*Math.PI)})],
-    [models.orbit.Orbit(), models.world.RadialCoords({r: 100*5, dr: -30, ds: randFrom(-0.2*Math.PI, 0.2*Math.PI)})]
-  ])
-});
+var orbit = function (baseRadius) {
+  var closure = baseRadius;
+  return function (t) {
+    return baseRadius - t / CIRCLE_COUNT;
+  }
+}
 
-var t0 = new Date();
-var t1 = t0;
-var drawLoop = function (window, stage, renderer) {
-  world = models.world.tick(world, (t1-t0)/1000);
 
+
+var point = function (creationTime, offset) {
+  var _offset = offset
+  var _creationTime = creationTime
+  return function (t) {
+    while (t - _creationTime > POINT_PERIOD) {
+      _creationTime += POINT_PERIOD;
+    }
+    var r = (1.0 - (t - _creationTime) * SPEED / CIRCLE_COUNT) * MAX_CIRCLE_RADIUS;
+    var o = 2.0 * Math.PI * period((t - _creationTime) * SPEED) + _offset;
+
+    return [o, r];
+  }
+}
+
+var orbits = []
+for (i = 0; i < CIRCLE_COUNT; i++) {
+  orbits.push(orbit((i + 1) / CIRCLE_COUNT));
+}
+
+var points = []
+for (i = 0; i < POINT_COUNT; i++) {
+  points.push(point(i * -_SPEED, i * Math.PI / 6.0));
+}
+
+var render = function(stage, renderer, time, timedelta) {
+  // updating model
+  var t = period(SPEED * time);
+  var o = orbits.map( function (f) { return f(t); } );
+  var p = points.map( function (f) { return f(time); } );
+  
+  // clearing screen
   stage.removeChildren();
-
-  world.get('orbits').forEach(function (coords) {
-    var orbit = new PIXI.Container();
-    var circle = new PIXI.Graphics();
-    circle.lineStyle(1, 0xff0000);
-  	circle.drawCircle(0, 0, coords.get('r'));
-    orbit.addChild(circle);
-    var marker = new PIXI.Graphics();
-    marker.lineStyle(0);
-    marker.beginFill(0xff0000);
-    marker.drawCircle(coords.get('r'), 0, 3);
-    orbit.addChild(circle);
-    orbit.addChild(marker);
-    orbit.rotation = coords.get('s');
-    stage.addChild(orbit);
-  });
-
   renderer.render(stage);
 
-  window.requestAnimationFrame(function () {
-    t0 = t1;
-    t1 = new Date();
-    drawLoop(window, stage, renderer);
-  });
-};
+  // drawing
+  var graphics = new PIXI.Graphics();
+  graphics.lineStyle(1, 0xFF0000);
+
+  _.each(o, function (r) { graphics.drawCircle(0, 0, MAX_CIRCLE_RADIUS * r); });
+
+  graphics.beginFill(0xFF0000, 1.0);
+  _.each(p, function (p) { graphics.drawCircle(Math.cos(p[0]) * p[1], Math.sin(p[0]) * p[1], 5); } );
+  graphics.endFill();
+  
+  stage.addChild(graphics);
+  renderer.render(stage);
+}
+
+var startTime = (new Date()).getTime()
+var lastFrame = 0
 
 window.onload = function() {
   var $gameContainer = $('#gameContainer');
@@ -65,5 +91,17 @@ window.onload = function() {
 	var renderer = PIXI.autoDetectRenderer(width, height);
 
 	document.getElementById('gameContainer').appendChild(renderer.view);
-  drawLoop(window, stage, renderer, {antialias: true});
+
+  var drawLoop = function(window, stage, renderer) {
+    var time = (new Date()).getTime() - startTime
+    var timedelta = time - lastFrame
+    render(stage, renderer, time, timedelta)
+    lastFrame = time
+
+    window.requestAnimationFrame(function () {
+      drawLoop(window, stage, renderer)
+    });
+  }
+
+  drawLoop(window, stage, renderer);
 };
